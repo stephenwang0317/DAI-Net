@@ -3,7 +3,8 @@ from PIL import Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from torch.autograd import Variable
+import numpy as np
 
 class DecomNet(nn.Module):
     def __init__(self, channel=64, kernel_size=3):
@@ -94,4 +95,62 @@ class RetinexNet(nn.Module):
         input_R = torch.unsqueeze(input_R, dim=1)
         return torch.mean(self.gradient(input_I, "x") * torch.exp(-10 * self.ave_gradient(input_R, "x")) +
                           self.gradient(input_I, "y") * torch.exp(-10 * self.ave_gradient(input_R, "y")))
+
+    def load(self,ckpt_path):
+        if os.path.isfile(ckpt_path):
+            ckpt_dict =  torch.load(ckpt_path)
+            self.DecomNet.load_state_dict(ckpt_dict)
+            return True
+        else:
+            return False
+
+    def predict(self,
+                test_low_data_names,
+                res_dir,
+                ckpt_path):
+        if self.load(ckpt_path):
+            print(ckpt_path, " : loaded")
+        else:
+            raise Exception
+        
+        output_arrs =[] 
+        for idx in range(len(test_low_data_names)):
+            test_img_path  = test_low_data_names[idx]
+            test_img_name  = test_img_path.split('/')[-1]
+            print('Processing ', test_img_name)
+            
+            test_low_img   = Image.open(test_img_path)
+            test_low_img   = np.array(test_low_img, dtype="float32")/255.0
+            test_low_img   = np.transpose(test_low_img, (2, 0, 1))
+            input_low_test = np.expand_dims(test_low_img, axis=0)
+
+            input_low  = Variable(torch.FloatTensor(torch.from_numpy(input_low_test))).cuda()
+            
+            R_low, I_low = self.DecomNet(input_low)
+            I_low_3 = torch.cat((I_low, I_low, I_low), dim=1)
+
+            t1 = R_low.detach().cpu()
+            t2 = I_low_3.detach().cpu()
+            R_low = np.squeeze(t1)
+            I_low = np.squeeze(t2)
+            R_low= np.concatenate([R_low], axis=2)
+            I_low= np.concatenate([I_low], axis=2)
+            
+            R_low = np.transpose(R_low, (1,2,0))
+            I_low = np.transpose(I_low, (1,2,0))
+
+            R_low = Image.fromarray(np.clip(R_low * 255.0, 0, 255.0).astype('uint8'))
+            I_low = Image.fromarray(np.clip(I_low * 255.0, 0, 255.0).astype('uint8'))
+
+            filepath = res_dir + '/' + test_img_name
+            R_low.save(filepath[:-4] + '_R.jpg')
+            I_low.save(filepath[:-4] + '_I.jpg')
+            
+
+            output_arrs.append([R_low,I_low])
+        
+        return output_arrs
+        
+        
+
 
